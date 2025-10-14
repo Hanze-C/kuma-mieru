@@ -47,6 +47,32 @@ function getOptionalEnvVar(name: string, defaultValue: string | null = null): st
   return value !== undefined ? value : defaultValue;
 }
 
+const statusPageSchema = z
+  .object({
+    config: z
+      .object({
+        title: z.string().optional(),
+        description: z.string().nullable().optional(),
+        icon: z.string().optional(),
+      })
+      .passthrough(),
+  })
+  .passthrough();
+
+async function fetchStatusPageData(baseUrl: string, pageId: string) {
+  const apiUrl = new URL(`/api/status-page/${pageId}`, baseUrl);
+  const response = await fetch(apiUrl);
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch status page API: ${response.status} ${response.statusText}`,
+    );
+  }
+
+  const json = await response.json();
+  return statusPageSchema.parse(json);
+}
+
 async function fetchSiteMeta(baseUrl: string, pageId: string) {
   const customTitle = getOptionalEnvVar('FEATURE_TITLE');
   const customDescription = getOptionalEnvVar('FEATURE_DESCRIPTION');
@@ -93,17 +119,31 @@ async function fetchSiteMeta(baseUrl: string, pageId: string) {
       icon: customIcon || preloadData.config.icon || undefined,
     });
   } catch (error) {
-    console.error('Error fetching site meta:', error);
+    console.error('Error fetching site meta from HTML:', error);
 
-    if (hasAnyCustomValue) {
+    try {
+      console.log('Attempting to fetch site meta from status page API fallback...');
+      const statusPageData = await fetchStatusPageData(baseUrl, pageId);
+      const { config } = statusPageData;
+
       return siteMetaSchema.parse({
-        title: customTitle || undefined,
-        description: customDescription || undefined,
-        icon: customIcon || undefined,
+        title: customTitle || config.title || undefined,
+        description: customDescription || config.description || undefined,
+        icon: customIcon || config.icon || undefined,
       });
-    }
+    } catch (apiError) {
+      console.error('Error fetching site meta from status page API:', apiError);
 
-    return siteMetaSchema.parse({});
+      if (hasAnyCustomValue) {
+        return siteMetaSchema.parse({
+          title: customTitle || undefined,
+          description: customDescription || undefined,
+          icon: customIcon || undefined,
+        });
+      }
+
+      return siteMetaSchema.parse({});
+    }
   }
 }
 
